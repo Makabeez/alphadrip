@@ -4,3 +4,4 @@ node_modules/
 signals.jsonl
 dist/
 .DS_Store
+package-lock.json

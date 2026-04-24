@@ -162,7 +162,7 @@
   /* ── Settlements ────────────────────────────────── */
   .settle-row {
     display: grid;
-    grid-template-columns: 60px 1fr 70px;
+    grid-template-columns: 60px 1fr 70px 60px;
     gap: 10px;
     padding: 6px 0;
     border-bottom: 1px dashed var(--grid);
@@ -172,6 +172,9 @@
   .settle-row .t { color: var(--fg-dim); }
   .settle-row .addr { color: var(--cyan); font-family: monospace; overflow: hidden; text-overflow: ellipsis; }
   .settle-row .amt { text-align: right; color: var(--green); font-feature-settings: "tnum"; }
+  .settle-row .tx-link { text-align: right; font-size: 10px; }
+  .settle-row .tx-link a { color: var(--amber); text-decoration: none; }
+  .settle-row .tx-link a:hover { color: var(--green); }
 
   /* ── Empty state ────────────────────────────────── */
   .empty {
@@ -217,6 +220,7 @@
     </div>
     <div class="header-right">
       <span class="kv"><span>PRICE</span> <b id="hdr-price">$0.003</b></span>
+      <span class="kv"><span>CHAIN</span> <b>Arc Testnet</b></span>
       <span class="kv"><span>SELLER</span> <b id="hdr-seller">—</b></span>
       <span class="kv"><span class="pulse"></span><b>LIVE</b></span>
     </div>
@@ -231,12 +235,12 @@
     <div class="stat">
       <div class="label">Paid Accesses</div>
       <div class="value" id="s-paid">0</div>
-      <div class="sub">via x402 + gateway</div>
+      <div class="sub">EIP-3009 on-chain settlements</div>
     </div>
     <div class="stat">
       <div class="label">USDC Earned</div>
       <div class="value amber" id="s-earned">0.000</div>
-      <div class="sub">settled gas-free</div>
+      <div class="sub">real USDC on Arc Testnet</div>
     </div>
     <div class="stat">
       <div class="label">Subscribers</div>
@@ -268,7 +272,7 @@
     <div class="panel">
       <div class="panel-title">
         <span>▸ recent settlements</span>
-        <span class="muted">x402</span>
+        <span class="muted">x402 · EIP-3009</span>
       </div>
       <div id="settle-list">
         <div class="empty" style="padding: 20px 10px;">
@@ -282,28 +286,34 @@
         <span>▸ how to subscribe</span>
       </div>
       <pre style="font-size: 10px; color: var(--fg-dim); line-height: 1.6; white-space: pre-wrap;">
-<span style="color: var(--fg)">import { GatewayClient } from
-  "@circle-fin/x402-batching/client";</span>
+<span style="color: var(--green)">// 1. Fetch 402 payment requirements</span>
+<span style="color: var(--fg)">const r = await fetch(url);
+const reqs = JSON.parse(atob(
+  r.headers.get("payment-required")
+)).accepts[0];</span>
 
-<span style="color: var(--fg)">const client = new GatewayClient({
-  chain: "arcTestnet",
-  privateKey: process.env.PK,
+<span style="color: var(--green)">// 2. Sign EIP-3009 off-chain</span>
+<span style="color: var(--fg)">const sig = await wallet.signTypedData({
+  domain: { name: "USDC", version: "2",
+    chainId: 5042002,
+    verifyingContract: reqs.asset },
+  primaryType: "TransferWithAuthorization",
+  message: { from, to: reqs.payTo,
+    value, validAfter, validBefore, nonce }
 });</span>
 
-<span style="color: var(--green)">// first time only — 1 on-chain tx</span>
-await client.deposit("1");
-
-<span style="color: var(--green)">// fetch a signal for $0.003 USDC</span>
-<span style="color: var(--amber)">const { data } = await client.pay(
-  "<span id="sub-url">this-url</span>/signals/latest"
-);</span></pre>
+<span style="color: var(--green)">// 3. Retry with PAYMENT-SIGNATURE header</span>
+<span style="color: var(--amber)">const res = await fetch(url, {
+  headers: { "payment-signature": b64(payload) }
+});
+// → signal JSON + real Arc tx hash</span></pre>
     </div>
 
   </div>
 
   <footer>
     <span>alphadrip // submission · agentic commerce on arc · apr 2026</span>
-    <span>built by <a href="https://github.com/Makabeez" target="_blank">@makabeez</a> · powered by circle nanopayments</span>
+    <span>built by <a href="https://github.com/Makabeez" target="_blank">@makabeez</a> · direct EIP-3009 on arc testnet</span>
   </footer>
 
 </div>
@@ -324,6 +334,11 @@ await client.deposit("1");
   function short(addr) {
     if (!addr) return '—';
     return addr.slice(0, 6) + '…' + addr.slice(-4);
+  }
+
+  function shortTx(hash) {
+    if (!hash) return '';
+    return hash.slice(0, 6) + '…' + hash.slice(-4);
   }
 
   function fmtTime(ms) {
@@ -364,15 +379,23 @@ await client.deposit("1");
     `).join('');
   }
 
-  function renderSettlements(list) {
-    if (!list || list.length === 0) return;
-    settleList.innerHTML = list.slice(0, 12).map(s => `
+  function settlementRowHtml(s) {
+    const txLink = s.tx_hash
+      ? `<div class="tx-link"><a href="https://testnet.arcscan.app/tx/${s.tx_hash}" target="_blank">${shortTx(s.tx_hash)} ↗</a></div>`
+      : `<div class="tx-link"></div>`;
+    return `
       <div class="settle-row">
         <div class="t">${fmtTime(s.time)}</div>
         <div class="addr">${short(s.payer)}</div>
         <div class="amt">+${s.amount.toFixed(6)}</div>
+        ${txLink}
       </div>
-    `).join('');
+    `;
+  }
+
+  function renderSettlements(list) {
+    if (!list || list.length === 0) return;
+    settleList.innerHTML = list.slice(0, 12).map(settlementRowHtml).join('');
   }
 
   function connect() {
@@ -389,7 +412,6 @@ await client.deposit("1");
         feedItems = msg.recent_signals || [];
         $('hdr-seller').textContent = short(msg.seller);
         $('hdr-price').textContent = msg.price;
-        $('sub-url').textContent = location.origin;
         renderStats();
         renderFeed();
         renderSettlements(msg.recent_settlements);
@@ -408,21 +430,23 @@ await client.deposit("1");
       if (msg.type === 'payment') {
         state.signals_paid_for += 1;
         state.total_earned_usdc += msg.amount;
-        // unique_payers only updates on snapshot — close enough
         renderStats();
 
-        // Prepend to settlement list
-        const current = Array.from(settleList.querySelectorAll('.settle-row'));
         const newRow = document.createElement('div');
         newRow.className = 'settle-row flash-cash';
+        const txLink = msg.tx_hash
+          ? `<div class="tx-link"><a href="https://testnet.arcscan.app/tx/${msg.tx_hash}" target="_blank">${shortTx(msg.tx_hash)} ↗</a></div>`
+          : `<div class="tx-link"></div>`;
         newRow.innerHTML = `
           <div class="t">${fmtTime(msg.time)}</div>
           <div class="addr">${short(msg.payer)}</div>
           <div class="amt">+${msg.amount.toFixed(6)}</div>
+          ${txLink}
         `;
         if (settleList.querySelector('.empty')) settleList.innerHTML = '';
         settleList.prepend(newRow);
-        if (current.length >= 12) settleList.removeChild(settleList.lastChild);
+        const rows = settleList.querySelectorAll('.settle-row');
+        if (rows.length > 12) settleList.removeChild(rows[rows.length - 1]);
         return;
       }
     };
