@@ -1,0 +1,6 @@
+node_modules/
+.env
+*.log
+signals.jsonl
+dist/
+.DS_Store
